@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>채팅 사이트</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #1877f2;
+            text-align: center;
+        }
+        .logout {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .logout a {
+            color: #1877f2;
+            text-decoration: none;
+        }
+        .chat-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 18px;
+            max-width: 70%;
+            clear: both;
+        }
+        .message .username {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .message-sent {
+            background-color: #0084ff;
+            color: white;
+            float: right;
+        }
+        .message-received {
+            background-color: #e4e6eb;
+            float: left;
+        }
+        .input-area {
+            display: flex;
+            margin-top: 20px;
+        }
+        #id_message_send_input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            font-size: 16px;
+        }
+        #id_message_send_button, #fileButton {
+            background-color: #1877f2;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 20px;
+            margin-left: 10px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #fileButton {
+            background-color: #42b72a;
+        }
+        #file-send-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>안녕하세요, {{request.user}}님! 채팅 사이트에 오신 것을 환영합니다!</h1>
+        
+        {% if request.user.is_authenticated %}
+        <div class="logout">
+            <a href="{% url 'logout-user' %}">로그아웃</a>
+        </div>
+        {% endif %}
+        
+        <div class="chat-container" id="id_chat_item_container"></div>
+        
+        <div class="input-area">
+            <input type="file" id="file-input">
+            <button id="file-send-button">파일 선택</button>
+            <button id="message-send-button">전송</button>
+            <input type="text" id="id_message_send_input" placeholder="메시지를 입력하세요...">
+        </div>
+    </div>
+
+    <script>
+        const currentUsername = "{{request.user.username}}";
+        const chatContainer = document.querySelector("#id_chat_item_container");
+        const messageInput = document.querySelector("#id_message_send_input");
+        const sendButton = document.querySelector("#id_message_send_button");
+        const fileInput = document.querySelector("#fileInput");
+        const fileButton = document.querySelector("#fileButton");
+        let chatSocket = new WebSocket('ws://' + window.location.host + '/ws/chat/');
+        const fileSendButton = document.getElementById('file-send-button');
+
+        chatSocket.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            if (data.type === 'file_upload_start') {
+            disableFileUpload();
+            } else if (data.type === 'file_upload_end') {
+            enableFileUpload();
+            }
+        };
+
+        function disableFileUpload() {
+            fileSendButton.disabled = true;
+            fileSendButton.title = '다른 유저가 파일을 전송중입니다.';
+        }
+
+        function enableFileUpload() {
+            fileSendButton.disabled = false;
+            fileSendButton.title = '';
+        }
+
+        fileSendButton.addEventListener('click', function() {
+            const fileInput = document.getElementById('file-input');
+            if (fileInput.files.length > 0) {
+            chatSocket.send(JSON.stringify({
+                'type': 'file_upload_request',
+                'username': '{{ request.user.username }}'
+            }));
+            }
+        });
+                
+        chatSocket.onopen = function(e) {
+            console.log("연결이 성공적으로 설정되었습니다!");
+        };
+        
+        chatSocket.onclose = function(e) {
+            console.log("예기치 않은 일이 발생했습니다!");
+        };
+        
+        messageInput.focus();
+        
+        messageInput.onkeyup = function(e) {
+            if (e.keyCode == 13) {
+                sendButton.click();
+            }
+        };
+        
+        sendButton.onclick = function(e) {
+            var messageInput = document.querySelector("#id_message_send_input").value;
+            if (messageInput.trim()) {
+                chatSocket.send(JSON.stringify({
+                    type: "chat_message",
+                    message: messageInput, 
+                    username: currentUsername
+                }));
+                document.querySelector("#id_message_send_input").value = "";
+            }
+        };
+
+        fileButton.onclick = function() {
+            if (sendFile) {
+                fileInput.value = '';
+                fileInput.click();
+            }
+        };
+
+        fileInput.onchange = function() {
+            if (fileInput.files.length > 0 && sendFile) {
+                const file = fileInput.files[0];
+                chatSocket.send(JSON.stringify({
+                    'type': 'file_upload_request',
+                    'username': currentUsername
+                }));
+            }
+        };
+
+        function appendMessage(username, message) {
+            var div = document.createElement("div");
+            div.className = "message " + (username === currentUsername ? "message-sent" : "message-received");
+            div.innerHTML = `<div class="username">${username}</div>${message}`;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function uploadFile() {
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/upload/', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    chatSocket.send(JSON.stringify({
+                        'type': 'file_upload_complete',
+                        'username': currentUsername,
+                        'file_name': data.file_name,
+                        'file_url': data.file_url
+                    }));
+                }
+            });
+        }
+
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+    </script>
+</body>
+</html>
